@@ -1,0 +1,140 @@
+AI Trend Real-time Monitoring System
+=====================================
+
+Lakehouse_ai_pipeline/
+│
+├── 📚 docs/                              # 项目文档
+│   ├── PROJECT_PLAN.md                   # 详细项目规划（技术架构、实施步骤）
+│   ├── PROJECT_SUMMARY.md                # 项目总结（已完成内容、下一步计划）
+│   └── QUICKSTART.md                     # 15分钟快速入门指南
+│
+├── 📊 data_ingestion/                    # 数据采集层
+│   ├── __init__.py
+│   ├── config.py                         # 配置管理（API密钥、参数）
+│   ├── kafka_producer.py                 # Kafka生产者（发送消息）
+│   ├── twitter/
+│   │   └── collector.py                  # Twitter数据采集器
+│   └── reddit/
+│       └── collector.py                  # Reddit数据采集器
+│
+├── 🌊 streaming/                         # 流处理层
+│   ├── kafka/                            # Kafka配置
+│   └── spark/
+│       └── processor.py                  # Spark Streaming处理作业
+│                                         # （Bronze/Silver/Gold数据分层）
+│
+├── 💾 storage/                           # 存储层配置
+│   ├── minio/                            # MinIO配置
+│   └── delta_lake/                       # Delta Lake表定义
+│
+├── 📈 analytics/                         # 分析脚本
+│   └── (DuckDB查询脚本 - 待添加)
+│
+├── 🎨 dashboard/                         # 可视化层
+│   └── app.py                            # Streamlit Dashboard应用
+│                                         # （热点话题、趋势图表、实时数据）
+│
+├── ⚙️ config/                            # 配置文件
+│   └── env.example                       # 环境变量模板
+│
+├── 🚀 scripts/                           # 启动脚本
+│   ├── start_infrastructure.sh           # 启动基础设施（Docker服务）
+│   ├── start_collectors.sh               # 启动数据采集器
+│   ├── stop_collectors.sh                # 停止数据采集器
+│   └── start_dashboard.sh                # 启动Dashboard
+│
+├── 🐳 docker-compose.yml                 # Docker容器编排配置
+│   # 包含：Kafka, Zookeeper, MinIO, Spark (Master + Workers)
+│
+├── 📝 README.md                          # 项目主文档
+├── 📦 requirements.txt                   # Python依赖列表
+└── 🚫 .gitignore                         # Git忽略规则
+
+
+核心技术栈：
+===========
+
+数据采集：   Python, Tweepy (Twitter API), PRAW (Reddit API)
+消息队列：   Apache Kafka
+流处理：     Spark Structured Streaming
+存储：       MinIO (S3兼容) + Delta Lake (ACID事务)
+分析：       DuckDB (轻量级分析)
+可视化：     Streamlit (实时Dashboard)
+容器化：     Docker Compose
+未来扩展：   Milvus (向量数据库), LangChain (RAG), Airflow (调度)
+
+
+快速开始：
+=========
+
+1. 配置环境：
+   cp config/env.example config/.env
+   # 编辑 config/.env 填入API密钥
+
+2. 启动基础设施：
+   ./scripts/start_infrastructure.sh
+
+3. 安装Python依赖：
+   python3 -m venv venv && source venv/bin/activate
+   pip install -r requirements.txt
+
+4. 启动系统：
+   ./scripts/start_collectors.sh     # 终端1：采集器
+   ./scripts/start_dashboard.sh      # 终端2：Dashboard
+
+5. 访问Dashboard：
+   http://localhost:8501
+
+
+服务端口：
+=========
+
+Kafka:         localhost:9092
+MinIO Console: http://localhost:9001 (admin/minioadmin)
+MinIO API:     http://localhost:9000
+Spark Master:  http://localhost:8080
+Dashboard:     http://localhost:8501
+
+
+数据流：
+=======
+
+Twitter/Reddit API
+       ↓
+   采集器 (Python)
+       ↓
+    Kafka (消息队列)
+       ↓
+  Spark Streaming (实时处理)
+       ↓
+   Delta Lake (MinIO)
+   (Bronze → Silver → Gold)
+       ↓
+    Dashboard (Streamlit)
+       ↓
+   用户可视化分析
+
+
+项目状态：
+=========
+
+✅ MVP规划完成
+✅ 基础架构搭建
+✅ 数据采集模块
+✅ 流处理框架
+✅ Dashboard原型
+🔄 端到端测试（进行中）
+🔄 功能完善（进行中）
+
+
+下一步：
+=======
+
+Week 1: 测试完整数据流，验证Delta Lake存储
+Week 2: Dashboard连接真实数据，优化算法
+Week 3: 添加向量搜索和RAG功能
+Week 4: 集成Airflow自动化
+
+
+详细信息请查看：docs/PROJECT_PLAN.md
+快速上手请查看：docs/QUICKSTART.md
