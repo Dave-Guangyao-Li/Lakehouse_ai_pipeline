@@ -25,10 +25,16 @@
 
 1. 访问 [Reddit Apps](https://www.reddit.com/prefs/apps)
 2. 点击 "Create App" 或 "Create Another App"
-3. 选择 "script"
-4. 记录：
-   - Client ID (在app名称下方的字符串)
-   - Client Secret
+3. 填写应用信息：
+   - **name**: 任意名称（如 "AI Trend Monitor"）
+   - **App type**: 选择 "**script**"（个人使用）
+   - **description**: 简短描述（如 "Personal AI trend monitoring tool"）
+   - **about url**: 留空即可
+   - **redirect uri**: 填写 `http://localhost:8080`（script类型不会实际使用，但必须填写）
+4. 点击 "Create app"
+5. 记录以下信息：
+   - **Client ID**: 在app名称下方的一串字符（如 `abcd1234efgh`）
+   - **Client Secret**: 标注为 "secret" 的那一行
 
 ## 第二步：配置环境变量
 
