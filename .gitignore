@@ -49,6 +49,10 @@ logs/
 *.duckdb
 *.duckdb.wal
 
+# Jar files (大文件，通过脚本下载)
+*.jar
+streaming/spark/jars/*.jar
+
 # Jupyter Notebooks
 .ipynb_checkpoints
 *.ipynb
@@ -82,3 +86,4 @@ secrets/
 Thumbs.db
 .Spotlight-V100
 .Trashes
+

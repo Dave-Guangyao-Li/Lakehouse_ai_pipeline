@@ -25,15 +25,15 @@ mkdir -p logs
 
 echo "📊 Starting collectors in background..."
 echo ""
+echo "⚠️  快速演示模式: 仅启动Reddit采集器"
+echo "   Twitter暂时禁用（避免API限流）"
+echo ""
 
-# Start Twitter collector
-echo "🐦 Starting Twitter collector..."
-python data_ingestion/twitter/collector.py > logs/twitter_collector.log 2>&1 &
-TWITTER_PID=$!
-echo "   PID: $TWITTER_PID"
-
-# Wait a bit
-sleep 2
+# Twitter collector - 暂时禁用
+# echo "🐦 Starting Twitter collector..."
+# python data_ingestion/twitter/collector.py > logs/twitter_collector.log 2>&1 &
+# TWITTER_PID=$!
+# echo "   PID: $TWITTER_PID"
 
 # Start Reddit collector
 echo "🤖 Starting Reddit collector..."
@@ -42,23 +42,20 @@ REDDIT_PID=$!
 echo "   PID: $REDDIT_PID"
 
 echo ""
-echo "✅ Collectors started!"
+echo "✅ Reddit collector started!"
 echo ""
 echo "📝 Process IDs:"
-echo "   Twitter: $TWITTER_PID"
 echo "   Reddit:  $REDDIT_PID"
 echo ""
 echo "📊 View logs:"
-echo "   Twitter: tail -f logs/twitter_collector.log"
 echo "   Reddit:  tail -f logs/reddit_collector.log"
 echo ""
-echo "🛑 To stop collectors:"
-echo "   kill $TWITTER_PID $REDDIT_PID"
+echo "🛑 To stop collector:"
+echo "   kill $REDDIT_PID"
 echo "   or use: ./scripts/stop_collectors.sh"
 echo ""
 
-# Save PIDs to file for easy stopping
-echo "$TWITTER_PID" > logs/twitter.pid
+# Save PID to file for easy stopping
 echo "$REDDIT_PID" > logs/reddit.pid
 
 echo "💾 PIDs saved to logs/*.pid"

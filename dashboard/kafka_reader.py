@@ -83,7 +83,7 @@ class KafkaDataReader:
 
     def get_all_messages(self) -> List[Dict[str, Any]]:
         """
-        Fetch all available messages from Kafka
+        Fetch all available messages from Kafka (读取全部数据，不限制数量)
 
         Returns:
             List of all message dictionaries
@@ -96,15 +96,15 @@ class KafkaDataReader:
                 bootstrap_servers=self.bootstrap_servers,
                 auto_offset_reset='earliest',  # Start from beginning
                 enable_auto_commit=False,
-                consumer_timeout_ms=5000,
+                consumer_timeout_ms=10000,  # 延长到10秒
+                group_id='dashboard-viewer',  # 添加消费者组
                 value_deserializer=lambda m: json.loads(m.decode('utf-8'))
             )
 
-            # Read all messages
+            # 移除 max_messages 限制，读取全部数据
             for message in consumer:
                 messages.append(message.value)
-                if len(messages) >= self.max_messages:
-                    break
+                # 不再有 break 条件，读到超时自动停止
 
             consumer.close()
 
@@ -113,6 +113,42 @@ class KafkaDataReader:
             return []
 
         return messages
+
+    def get_message_count(self) -> int:
+        """
+        获取Kafka topic的总消息数（不读取内容，只计数）
+
+        Returns:
+            Total number of messages in the topic
+        """
+        try:
+            consumer = KafkaConsumer(
+                bootstrap_servers=self.bootstrap_servers,
+                group_id='dashboard-counter'
+            )
+
+            # 获取topic的所有分区
+            partitions = consumer.partitions_for_topic(self.topic)
+            if not partitions:
+                consumer.close()
+                return 0
+
+            # 为每个分区创建TopicPartition对象
+            topic_partitions = [TopicPartition(self.topic, p) for p in partitions]
+            consumer.assign(topic_partitions)
+
+            # 移动到每个分区的末尾
+            consumer.seek_to_end()
+
+            # 计算总消息数
+            total = sum(consumer.position(tp) for tp in topic_partitions)
+            consumer.close()
+
+            return total
+
+        except Exception as e:
+            print(f"Error counting messages in Kafka: {e}")
+            return 0
 
     def parse_to_dataframe(self, messages: List[Dict[str, Any]]) -> pd.DataFrame:
         """
