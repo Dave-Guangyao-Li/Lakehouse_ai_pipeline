@@ -219,6 +219,29 @@ class KafkaDataReader:
                         'subreddit': data.get('subreddit', ''),
                     })
 
+                elif source == 'bluesky':
+                    # Bluesky数据解析
+                    text_raw = data.get('text', '')
+
+                    # 清理文本
+                    text_clean = html.unescape(text_raw)
+                    text_clean = ' '.join(text_clean.split())
+
+                    parsed_data.append({
+                        'source': 'Bluesky',
+                        'post_id': data.get('id'),
+                        'text': text_clean,
+                        'author': data.get('author_handle', 'Unknown'),
+                        'created_at': data.get('created_at'),
+                        'engagement': (
+                            data.get('metrics', {}).get('likes', 0) +
+                            data.get('metrics', {}).get('reposts', 0) * 2
+                        ),
+                        'likes': data.get('metrics', {}).get('likes', 0),
+                        'retweets': data.get('metrics', {}).get('reposts', 0),
+                        'hashtags': ','.join(data.get('hashtags', [])),
+                    })
+
             except Exception as e:
                 print(f"Error parsing message: {e}")
                 continue

@@ -79,6 +79,16 @@ class SocialMediaProducer:
         post_id = post_data.get('id')
         return self.send_message(Config.KAFKA_TOPIC_RAW, message, key=str(post_id))
 
+    def send_bluesky_post(self, post_data: Dict[str, Any]):
+        """Send Bluesky post data to Kafka"""
+        message = {
+            'source': 'bluesky',
+            'data': post_data,
+            'timestamp': post_data.get('created_at')
+        }
+        post_id = post_data.get('id')
+        return self.send_message(Config.KAFKA_TOPIC_RAW, message, key=str(post_id))
+
     def flush(self):
         """Flush any pending messages"""
         if self.producer:

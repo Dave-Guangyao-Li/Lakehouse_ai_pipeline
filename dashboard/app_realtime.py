@@ -199,6 +199,10 @@ st.markdown("""
         background: #1DA1F2;
     }
 
+    .badge-bluesky {
+        background: #0085FF;
+    }
+
     .card-meta {
         color: #787C7E;
         font-size: 0.875rem;
@@ -264,22 +268,28 @@ def load_real_data():
         messages = reader.get_all_messages()
 
         if not messages:
+            print(f"⚠️ Warning: get_all_messages() returned empty list, but total_count={total_count}")
             return None, total_count
 
         df = reader.parse_to_dataframe(messages)
 
         if df.empty:
+            print(f"⚠️ Warning: parse_to_dataframe() returned empty DataFrame from {len(messages)} messages")
             return None, total_count
 
+        print(f"✅ Successfully loaded {len(df)} rows from Kafka (total_count={total_count})")
         return df, total_count
 
     except Exception as e:
+        print(f"❌ Error loading data: {e}")
+        import traceback
+        traceback.print_exc()
         st.error(f"Error loading data: {e}")
         return None, 0
 
 
 def extract_real_keywords(df, top_n=20):
-    """使用NLP提取真实的AI主题词（过滤虚词和停用词）"""
+    """使用NLP提取真实的AI概念短语（多词组合）"""
     if df is None or df.empty or not NLP_AVAILABLE:
         return pd.DataFrame()
 
@@ -294,36 +304,141 @@ def extract_real_keywords(df, top_n=20):
         # 使用spacy处理（限制长度避免超时）
         doc = nlp(all_text[:200000])
 
-        # 提取有意义的词（只保留名词和专有名词）
-        keywords = []
+        # 通用词黑名单（过滤单个通用词）
+        GENERIC_WORDS_BLACKLIST = {
+            'data', 'image', 'model', 'tool', 'system', 'code', 'language',
+            'result', 'problem', 'example', 'project', 'paper', 'test',
+            'work', 'performance', 'version', 'feature', 'issue', 'user',
+            'file', 'application', 'platform', 'service', 'product',
+            'company', 'technology', 'solution', 'method', 'process',
+            'source', 'experience', 'knowledge', 'context', 'inference',
+            'search', 'noise', 'year', 'day', 'app', 'human', 'generation'
+        }
 
-        for token in doc:
-            # 词性过滤：只保留名词(NOUN)和专有名词(PROPN)
-            if token.pos_ in ['NOUN', 'PROPN']:
-                # 词形还原（将复数变单数、动词变原形等）
-                word = token.lemma_.lower()
+        # 提取名词短语（noun chunks）
+        phrases = []
 
-                # 严格过滤条件
-                if (len(word) >= 3  # 至少3个字符
-                    and word not in STOP_WORDS  # 不在停用词表
-                    and not word.isdigit()  # 不是纯数字
-                    and token.is_alpha  # 只包含字母
-                    and word not in ['artificial intelligence', 'machine learning', 'deep learning']  # 过滤通用AI词
-                    and not word.startswith('ai')  # 过滤ai开头的词
-                    ):
-                    keywords.append(word)
+        for chunk in doc.noun_chunks:
+            phrase = chunk.text.lower().strip()
+            words = phrase.split()
+            num_words = len(words)
+
+            # 过滤规则：
+            # 1. 长度：2-4个词（我们要的是短语，不是单词）
+            # 2. 不是纯停用词组合
+            # 3. 不以通用词开头或结尾
+            # 4. 不包含数字
+            # 5. 过滤掉纯通用AI词
+
+            if (2 <= num_words <= 4  # 多词短语
+                and all(w not in STOP_WORDS for w in words)  # 不是停用词
+                and words[0] not in GENERIC_WORDS_BLACKLIST  # 首词不是通用词
+                and words[-1] not in GENERIC_WORDS_BLACKLIST  # 尾词不是通用词
+                and not any(w.isdigit() for w in words)  # 不包含数字
+                and phrase not in ['artificial intelligence', 'machine learning', 'deep learning', 'neural network']  # 过滤通用AI词
+                and len(phrase) >= 8  # 总字符数至少8（避免太短的短语）
+                ):
+                phrases.append(phrase)
 
         # 统计频率
-        keyword_counts = Counter(keywords).most_common(top_n)
+        phrase_counts = Counter(phrases).most_common(top_n)
 
-        if not keyword_counts:
+        # 如果短语太少，降低标准，允许单个有意义的技术词
+        if len(phrase_counts) < 5:
+            keywords = []
+            for token in doc:
+                if token.pos_ in ['NOUN', 'PROPN']:
+                    word = token.lemma_.lower()
+                    if (len(word) >= 4
+                        and word not in STOP_WORDS
+                        and word not in GENERIC_WORDS_BLACKLIST
+                        and not word.isdigit()
+                        and token.is_alpha
+                        and not word.startswith('ai')):
+                        keywords.append(word)
+
+            keyword_counts = Counter(keywords).most_common(top_n)
+            # 合并短语和关键词，短语优先
+            all_counts = phrase_counts + keyword_counts
+            all_counts = dict(all_counts).items()
+            phrase_counts = sorted(all_counts, key=lambda x: x[1], reverse=True)[:top_n]
+
+        if not phrase_counts:
             return pd.DataFrame()
 
-        return pd.DataFrame(keyword_counts, columns=['keyword', 'mentions'])
+        return pd.DataFrame(phrase_counts, columns=['keyword', 'mentions'])
 
     except Exception as e:
         print(f"❌ 关键词提取错误: {e}")
         return pd.DataFrame()
+
+
+def check_bluesky_collector_status():
+    """检查Bluesky采集器运行状态"""
+    log_file = 'logs/bluesky_collector.log'
+
+    try:
+        if not os.path.exists(log_file):
+            return {
+                'status': 'idle',
+                'message': '日志文件不存在，采集器可能未启动',
+                'rate_limited': False,
+                'last_success': False
+            }
+
+        # 读取最近10行日志
+        with open(log_file, 'r', encoding='utf-8', errors='ignore') as f:
+            lines = f.readlines()
+            recent_lines = lines[-10:] if len(lines) > 10 else lines
+
+        recent_text = ''.join(recent_lines)
+
+        # 检查最后修改时间
+        last_modified = os.path.getmtime(log_file)
+        time_diff = time.time() - last_modified
+
+        # 超过5分钟没有更新
+        if time_diff > 300:
+            return {
+                'status': 'idle',
+                'message': f'采集器已空闲 {int(time_diff/60)} 分钟',
+                'rate_limited': False,
+                'last_success': False
+            }
+
+        # 检查是否有采集成功的记录
+        if 'Collected and sent' in recent_text or '✅' in recent_text:
+            return {
+                'status': 'running',
+                'message': '正在采集 Bluesky 帖子',
+                'rate_limited': False,
+                'last_success': True
+            }
+
+        # 检查是否有认证或连接错误
+        if 'authentication failed' in recent_text.lower() or 'connection' in recent_text.lower():
+            return {
+                'status': 'error',
+                'message': 'API认证或连接错误',
+                'rate_limited': False,
+                'last_success': False
+            }
+
+        # 默认运行状态
+        return {
+            'status': 'running',
+            'message': '监控中',
+            'rate_limited': False,
+            'last_success': False
+        }
+
+    except Exception as e:
+        return {
+            'status': 'error',
+            'message': f'无法读取状态: {str(e)}',
+            'rate_limited': False,
+            'last_success': False
+        }
 
 
 def check_reddit_collector_status():
@@ -415,7 +530,12 @@ def create_word_cloud(df):
             st.warning("无法生成词云：没有提取到关键词")
             return
 
-        word_freq = dict(zip(keywords_df['keyword'], keywords_df['mentions']))
+        # 清理关键词文本：移除换行符和多余空格，确保是单行文本
+        clean_keywords = {}
+        for keyword, count in zip(keywords_df['keyword'], keywords_df['mentions']):
+            # 将多行文本转为单行，移除换行符
+            clean_keyword = ' '.join(str(keyword).split())
+            clean_keywords[clean_keyword] = count
 
         wordcloud = WordCloud(
             width=800,
@@ -425,35 +545,133 @@ def create_word_cloud(df):
             max_words=50,
             relative_scaling=0.5,
             min_font_size=12,
-            collocations=False
-        ).generate_from_frequencies(word_freq)
+            collocations=False,
+            prefer_horizontal=0.7  # 优先水平显示，避免多行问题
+        ).generate_from_frequencies(clean_keywords)
 
         fig, ax = plt.subplots(figsize=(10, 5))
         ax.imshow(wordcloud, interpolation='bilinear')
         ax.axis('off')
         st.pyplot(fig)
+        plt.close(fig)  # 关闭图形释放内存
 
     except Exception as e:
-        st.error(f"词云生成错误: {e}")
+        st.warning(f"词云暂时无法生成")
+        st.info("💡 提示: 当前关键词数据较少或格式不兼容，请稍后刷新查看")
+
+
+def format_time_ago(timestamp_str):
+    """
+    将时间戳转换为相对时间显示
+
+    Args:
+        timestamp_str: ISO格式时间戳字符串或Unix时间戳
+
+    Returns:
+        相对时间字符串 (如 "2小时前", "3天前")
+    """
+    if not timestamp_str:
+        return ''
+
+    try:
+        # 尝试解析不同的时间格式
+        if isinstance(timestamp_str, (int, float)):
+            # Unix时间戳
+            post_time = datetime.fromtimestamp(timestamp_str)
+        elif 'T' in str(timestamp_str):
+            # ISO格式 (如 "2025-01-10T15:30:00")
+            post_time = datetime.fromisoformat(str(timestamp_str).replace('Z', '+00:00'))
+        else:
+            # 尝试作为字符串解析
+            post_time = datetime.fromisoformat(str(timestamp_str))
+
+        now = datetime.now()
+        delta = now - post_time
+
+        # 计算相对时间
+        if delta.days > 365:
+            years = delta.days // 365
+            return f"{years}年前"
+        elif delta.days > 30:
+            months = delta.days // 30
+            return f"{months}月前"
+        elif delta.days > 0:
+            return f"{delta.days}天前"
+        elif delta.seconds >= 3600:
+            hours = delta.seconds // 3600
+            return f"{hours}小时前"
+        elif delta.seconds >= 60:
+            minutes = delta.seconds // 60
+            return f"{minutes}分钟前"
+        else:
+            return "刚刚"
+
+    except Exception as e:
+        # 解析失败,返回原始值
+        return str(timestamp_str)
 
 
 def render_reddit_card(row):
     """渲染Reddit风格卡片"""
-    source = row.get('source', 'Unknown')
-    author = row.get('author', 'Unknown')
-    text = str(row.get('text', ''))[:200]
-    engagement = row.get('engagement', 0)
-    subreddit = row.get('subreddit', '')
+    import html
+    import pandas as pd
 
-    badge_class = 'badge-reddit' if source == 'Reddit' else 'badge-twitter'
+    # 安全获取字段，处理NaN和None
+    source = str(row.get('source', 'Unknown'))
+    author = str(row.get('author', 'Unknown'))
+
+    # 获取subreddit，处理NaN
+    subreddit = row.get('subreddit', '')
+    if pd.isna(subreddit) or subreddit == 'nan':
+        subreddit = ''
+    else:
+        subreddit = str(subreddit)
+
+    # 获取并清理文本（移除HTML标签）
+    text_raw = str(row.get('text', ''))
+    # 1. 解码HTML实体
+    text_clean = html.unescape(text_raw)
+    # 2. 移除HTML标签
+    text_clean = re.sub(r'<[^>]+>', '', text_clean)
+    # 3. 移除多余空白
+    text_clean = ' '.join(text_clean.split())
+    # 4. 截取前200字符
+    text = text_clean[:200]
+
+    # 获取engagement，处理NaN
+    engagement = row.get('engagement', 0)
+    if pd.isna(engagement):
+        engagement = 0
+    else:
+        engagement = int(engagement)
+
+    created_at = row.get('created_at', '')
+
+    # 根据来源设置badge样式
+    if source == 'Reddit':
+        badge_class = 'badge-reddit'
+    elif source == 'Bluesky':
+        badge_class = 'badge-bluesky'
+    else:  # Twitter
+        badge_class = 'badge-twitter'
+
+    # 格式化时间戳
+    time_display = format_time_ago(created_at)
+
+    # 构建metadata字符串（安全拼接）
+    meta_parts = []
+    if subreddit:
+        meta_parts.append(f'r/{subreddit}')
+    meta_parts.append(f'by u/{author}')
+    if time_display:
+        meta_parts.append(time_display)
+    meta_string = ' • '.join(meta_parts)
 
     card_html = f"""
     <div class="reddit-card">
         <div class="card-header">
             <span class="source-badge {badge_class}">{source}</span>
-            <span class="card-meta">
-                {'r/' + subreddit if subreddit else ''} {'• ' if subreddit else ''}by u/{author}
-            </span>
+            <span class="card-meta">{meta_string}</span>
         </div>
 
         <div class="card-title">{text}...</div>
@@ -523,8 +741,20 @@ def main():
 
         st.subheader("🤖 Collectors Status")
 
-        # Twitter状态（暂停）
-        st.markdown("- 🐦 **Twitter**: ⏸️ 暂停")
+        # Bluesky状态（动态检查）
+        bluesky_status = check_bluesky_collector_status()
+
+        if bluesky_status['status'] == 'running':
+            st.markdown("- 🔵 **Bluesky**: ✅ 正常运行")
+            st.caption(f"   📡 {bluesky_status['message']}")
+        elif bluesky_status['status'] == 'error':
+            st.markdown("- 🔵 **Bluesky**: ❌ 出现错误")
+            st.caption(f"   {bluesky_status['message']}")
+        elif bluesky_status['status'] == 'idle':
+            st.markdown("- 🔵 **Bluesky**: ⏸️ 未启动")
+            st.caption(f"   {bluesky_status['message']}")
+        else:
+            st.markdown("- 🔵 **Bluesky**: ❓ 状态未知")
 
         # Reddit状态（动态检查）
         reddit_status = check_reddit_collector_status()
@@ -534,7 +764,7 @@ def main():
             st.caption(f"   {reddit_status['message']}")
         elif reddit_status['status'] == 'running':
             st.markdown("- 🤖 **Reddit**: ✅ 正常运行")
-            st.caption("   📡 采集频率: 60秒/次")
+            st.caption("   📡 采集频率: 120秒/次")
         elif reddit_status['status'] == 'error':
             st.markdown("- 🤖 **Reddit**: ❌ 出现错误")
             st.caption(f"   {reddit_status['message']}")
@@ -682,15 +912,156 @@ def main():
     with tab3:
         st.subheader("📝 Recent Posts")
 
-        # 显示最近20条，按时间排序
-        if 'created_at' in df.columns:
-            recent_df = df.sort_values('created_at', ascending=False).head(20)
-        else:
-            recent_df = df.head(20)
+        # === 筛选器控制 ===
+        col_filter1, col_filter2, col_filter3 = st.columns(3)
 
-        # 渲染卡片
-        for idx, row in recent_df.iterrows():
-            st.markdown(render_reddit_card(row), unsafe_allow_html=True)
+        with col_filter1:
+            # 日期筛选
+            date_filter = st.selectbox(
+                "📅 时间范围",
+                ["所有", "今天", "昨天", "本周", "本月"],
+                index=0
+            )
+
+        with col_filter2:
+            # 来源筛选
+            source_filter = st.selectbox(
+                "📡 来源",
+                ["所有"] + list(df['source'].unique()) if 'source' in df.columns else ["所有"],
+                index=0
+            )
+
+        with col_filter3:
+            # 排序选项
+            sort_by = st.selectbox(
+                "📊 排序",
+                ["最新", "最热", "参与度最高"],
+                index=0
+            )
+
+        # Subreddit筛选 (仅当有Reddit数据时显示)
+        if 'subreddit' in df.columns:
+            subreddits = df[df['subreddit'].notna()]['subreddit'].unique()
+            if len(subreddits) > 0:
+                selected_subreddits = st.multiselect(
+                    "🔍 Subreddit筛选",
+                    options=subreddits,
+                    default=None,
+                    placeholder="选择subreddit (可多选)"
+                )
+            else:
+                selected_subreddits = []
+        else:
+            selected_subreddits = []
+
+        st.markdown("---")
+
+        # === 应用筛选条件 ===
+        filtered_df = df.copy()
+
+        # 日期筛选
+        if 'created_at' in df.columns and date_filter != "所有":
+            # 先统一转换时间格式，支持多种格式（ISO8601, Unix timestamp等）
+            # utc=True 处理带时区的时间，errors='coerce' 将无效值转为 NaT
+            filtered_df['created_at_parsed'] = pd.to_datetime(
+                filtered_df['created_at'],
+                utc=True,
+                errors='coerce'
+            )
+
+            now = datetime.now()
+            if date_filter == "今天":
+                filtered_df = filtered_df[
+                    filtered_df['created_at_parsed'].dt.tz_localize(None).dt.date == now.date()
+                ]
+            elif date_filter == "昨天":
+                yesterday = now - timedelta(days=1)
+                filtered_df = filtered_df[
+                    filtered_df['created_at_parsed'].dt.tz_localize(None).dt.date == yesterday.date()
+                ]
+            elif date_filter == "本周":
+                week_ago = now - timedelta(days=7)
+                filtered_df = filtered_df[
+                    filtered_df['created_at_parsed'].dt.tz_localize(None) >= week_ago
+                ]
+            elif date_filter == "本月":
+                month_ago = now - timedelta(days=30)
+                filtered_df = filtered_df[
+                    filtered_df['created_at_parsed'].dt.tz_localize(None) >= month_ago
+                ]
+
+            # 移除临时列
+            filtered_df = filtered_df.drop('created_at_parsed', axis=1)
+
+        # 来源筛选
+        if source_filter != "所有":
+            filtered_df = filtered_df[filtered_df['source'] == source_filter]
+
+        # Subreddit筛选
+        if selected_subreddits:
+            filtered_df = filtered_df[filtered_df['subreddit'].isin(selected_subreddits)]
+
+        # 排序
+        if 'created_at' in filtered_df.columns:
+            if sort_by == "最新":
+                # 转换时间格式后排序，确保正确处理各种时间格式
+                filtered_df['_sort_time'] = pd.to_datetime(
+                    filtered_df['created_at'],
+                    utc=True,
+                    errors='coerce'
+                )
+                filtered_df = filtered_df.sort_values('_sort_time', ascending=False)
+                filtered_df = filtered_df.drop('_sort_time', axis=1)
+            elif sort_by == "最热" or sort_by == "参与度最高":
+                filtered_df = filtered_df.sort_values('engagement', ascending=False)
+        else:
+            if sort_by == "最热" or sort_by == "参与度最高":
+                filtered_df = filtered_df.sort_values('engagement', ascending=False)
+
+        # 限制显示数量
+        filtered_df = filtered_df.head(50)
+
+        # === 按日期分组显示 ===
+        if len(filtered_df) == 0:
+            st.info("🔍 没有找到符合条件的帖子")
+        else:
+            st.caption(f"📊 找到 {len(filtered_df)} 条帖子")
+
+            # 按日期分组
+            if 'created_at' in filtered_df.columns:
+                # 统一转换时间格式，支持带时区的时间
+                filtered_df['date'] = pd.to_datetime(
+                    filtered_df['created_at'],
+                    utc=True,
+                    errors='coerce'
+                ).dt.tz_localize(None).dt.date
+                grouped = filtered_df.groupby('date')
+
+                for date, group in grouped:
+                    # 计算相对日期
+                    today = datetime.now().date()
+                    if date == today:
+                        date_label = "今天"
+                    elif date == today - timedelta(days=1):
+                        date_label = "昨天"
+                    elif date >= today - timedelta(days=7):
+                        days_ago = (today - date).days
+                        date_label = f"{days_ago}天前"
+                    else:
+                        date_label = date.strftime("%Y-%m-%d")
+
+                    # 显示日期分组头部
+                    st.markdown(f"### 📅 {date_label} ({len(group)} 条)")
+
+                    # 渲染该日期的所有卡片
+                    for idx, row in group.iterrows():
+                        st.markdown(render_reddit_card(row), unsafe_allow_html=True)
+
+                    st.markdown("<br>", unsafe_allow_html=True)
+            else:
+                # 如果没有时间字段，直接显示
+                for idx, row in filtered_df.iterrows():
+                    st.markdown(render_reddit_card(row), unsafe_allow_html=True)
 
     # === 页脚 ===
     st.markdown("---")
