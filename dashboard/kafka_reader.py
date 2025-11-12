@@ -7,6 +7,8 @@ from kafka import KafkaConsumer, TopicPartition
 from typing import List, Dict, Any
 import pandas as pd
 from datetime import datetime
+import html
+import re
 
 
 class KafkaDataReader:
@@ -188,10 +190,26 @@ class KafkaDataReader:
                     })
 
                 elif source == 'reddit':
+                    # 清理HTML标签和转义字符
+                    title_raw = data.get('title', '')
+                    text_raw = data.get('text', '')
+
+                    # 1. 解码HTML实体（如&amp; &lt; &gt;）
+                    title_clean = html.unescape(title_raw)
+                    text_clean = html.unescape(text_raw)
+
+                    # 2. 移除所有HTML标签（如<div>, <p>, <a>等）
+                    title_clean = re.sub(r'<[^>]+>', '', title_clean)
+                    text_clean = re.sub(r'<[^>]+>', '', text_clean)
+
+                    # 3. 移除多余空白
+                    title_clean = ' '.join(title_clean.split())
+                    text_clean = ' '.join(text_clean.split())
+
                     parsed_data.append({
                         'source': 'Reddit',
                         'post_id': data.get('id'),
-                        'text': f"{data.get('title', '')} {data.get('text', '')}",
+                        'text': f"{title_clean} {text_clean}",
                         'author': data.get('author', 'Unknown'),
                         'created_at': data.get('created_utc'),
                         'engagement': data.get('metrics', {}).get('score', 0),
